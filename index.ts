@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { Server } from "@modelcontextprotocol/sdk/server";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio";
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -11,8 +11,9 @@ import {
   TextContent,
   ImageContent,
   Tool,
-} from "@modelcontextprotocol/sdk/types.js";
-import puppeteer, { Browser, Page } from "puppeteer";
+  Request
+} from "@modelcontextprotocol/sdk/types";
+import puppeteer, { Browser, Page, ConsoleMessage } from "puppeteer-core";
 
 // Define the tools once to avoid repetition
 const TOOLS: Tool[] = [
@@ -108,13 +109,22 @@ const screenshots = new Map<string, string>();
 
 async function ensureBrowser() {
   if (!browser) {
-    const npx_args = { headless: false }
-    const docker_args = { headless: true, args: ["--no-sandbox", "--single-process", "--no-zygote"] }
-    browser = await puppeteer.launch(process.env.DOCKER_CONTAINER ? docker_args : npx_args);
+    const launchOptions = {
+      executablePath: process.env.CHROME_BIN || '/nix/store/chrome/bin/chromium',
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--single-process'
+      ]
+    };
+    
+    browser = await puppeteer.launch(launchOptions);
     const pages = await browser.pages();
     page = pages[0];
 
-    page.on("console", (msg) => {
+    page.on("console", (msg: ConsoleMessage) => {
       const logEntry = `[${msg.type()}] ${msg.text()}`;
       consoleLogs.push(logEntry);
       server.notification({
@@ -285,15 +295,15 @@ async function handleToolCall(name: string, args: any): Promise<CallToolResult> 
               window.mcpHelper.logs.push(`[${method}] ${args.join(' ')}`);
               (window.mcpHelper.originalConsole as any)[method](...args);
             };
-          } );
-        } );
+          });
+        });
 
-        const result = await page.evaluate( args.script );
+        const result = await page.evaluate(args.script);
 
         const logs = await page.evaluate(() => {
           Object.assign(console, window.mcpHelper.originalConsole);
           const logs = window.mcpHelper.logs;
-          delete ( window as any).mcpHelper;
+          delete (window as any).mcpHelper;
           return logs;
         });
 
@@ -340,7 +350,6 @@ const server = new Server(
   },
 );
 
-
 // Setup request handlers
 server.setRequestHandler(ListResourcesRequestSchema, async () => ({
   resources: [
@@ -357,7 +366,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => ({
   ],
 }));
 
-server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+server.setRequestHandler(ReadResourceRequestSchema, async (request: Request) => {
   const uri = request.params.uri.toString();
 
   if (uri === "console://logs") {
@@ -391,7 +400,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: TOOLS,
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) =>
+server.setRequestHandler(CallToolRequestSchema, async (request: Request) =>
   handleToolCall(request.params.name, request.params.arguments ?? {})
 );
 
